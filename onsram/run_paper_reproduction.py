@@ -137,26 +137,55 @@ PAPER_MODELS = {
     # known ~1.24M-parameter size almost exactly).
     'squeezenet1_1': 'SqueezeNet',
     'MobileNetV2': 'MobileNetV2',  # not in the paper
+    # Sourced via spm_common/build_paper_models_torch.py (PyTorch -> ONNX
+    # -> onnx2tf -> trim exporter), not yet run to completion anywhere as
+    # of 2026-10-02 -- onnx2tf's own ONNX->TFLite step OOMs on this 7GB
+    # machine for both (see onsram/docs/onsram_model_roster.md §2a). No
+    # cosma/_exported/InceptionV4 or /SSD300 exists yet; both are opt-in
+    # below so a default sweep doesn't just error on them.
+    'InceptionV4': 'Inception-v4',
+    'SSD300': 'SSD300',
 }
 
 # Only run when named with --model: VGG16 runs out of memory in SCALE-Sim
-# on this machine and can take the whole desktop down with it.
-OPT_IN_MODELS = ('VGG16',)
+# on this machine and can take the whole desktop down with it. InceptionV4/
+# SSD300 aren't built yet at all (see PAPER_MODELS comment above) -- opt-in
+# so they don't just show up as ERROR rows in every default sweep until
+# build_paper_models_torch.py has actually been run for them somewhere.
+OPT_IN_MODELS = ('VGG16', 'InceptionV4', 'SSD300')
 
 VARIANTS = {'fused': '', 'unfused': '_unfused'}
 
 # Paper's OnSRAM-Static speedup per model, Fig. 7 (ResNeXt/MobileNetV1
 # printed; the rest read off the figure, about +-0.02 -- see module
 # docstring). Geomean over all 12 models: 1.59.
+# Inception-v4 (1.32) and SSD300 (1.23) added 2026-10-01 via the same
+# pixel-calibrated reading method, recomputed from scratch (not reused from
+# the original 2026-09-28 pass) and cross-checked against this same
+# dict's own already-known values before trusting the 2 new ones:
+# calibrating off the plot's 2 solid box-spine pixels (value-0 and value-3,
+# found as the only 2 full-width black horizontal lines in the chart,
+# 294px apart) reproduced GoogLeNet 1.842 (known 1.83), ResNet-50 1.495
+# (known 1.49), SqueezeNet 2.209 (known 2.20) all within ~0.01-0.015, and
+# correctly read both clipped bars (ResNeXt/MobileNetV1, true values
+# 3.81/4.76) as ~2.99 (the chart's own y=3 ceiling) -- see
+# onsram/docs/onsram_model_roster.md for the full method and why an
+# earlier calibration attempt (using 2 unrelated gray lines inside the
+# legend box, not the real gridlines) gave nonsense negative values first.
 PAPER_FIG7_STATIC = {
     'AlexNet': 1.02, 'VGG16': 1.02, 'GoogLeNet': 1.83, 'Inception-v3': 1.29,
-    'ResNet-50': 1.49, 'ResNeXt': 3.81, 'MobileNetV1': 4.76, 'SqueezeNet': 2.20,
+    'Inception-v4': 1.32, 'ResNet-50': 1.49, 'SSD300': 1.23, 'ResNeXt': 3.81,
+    'MobileNetV1': 4.76, 'SqueezeNet': 2.20,
 }
 
-# Paper's Table 1, inf-SPM row (printed values).
+# Paper's Table 1, inf-SPM row (printed values). Inception-v4 (1.58) and
+# SSD300 (1.31) added 2026-10-01, read directly from the table's own
+# printed text (not figure-calibrated) via pdftotext -layout on
+# ~/Downloads/OnSRAM_..._pdf -- see module docstring for the file.
 PAPER_TABLE1_INF_SPM = {
     'AlexNet': 1.04, 'VGG16': 1.19, 'GoogLeNet': 1.94, 'Inception-v3': 1.64,
-    'ResNet-50': 1.75, 'ResNeXt': 3.86, 'MobileNetV1': 5.17, 'SqueezeNet': 2.84,
+    'Inception-v4': 1.58, 'ResNet-50': 1.75, 'SSD300': 1.31, 'ResNeXt': 3.86,
+    'MobileNetV1': 5.17, 'SqueezeNet': 2.84,
 }
 
 # Sec 7.1 / Fig. 7's own stated range for OnSRAM-Static vs No SPM Mgmt,

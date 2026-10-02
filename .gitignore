@@ -29,7 +29,7 @@ benchmark_results
 results/
 outputs/
 
-cosma/_exported/
+_exported/
 cosma/topology.csv
 cosma/spm_plots/
 cosma/logs/
