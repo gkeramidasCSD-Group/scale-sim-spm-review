@@ -10,9 +10,11 @@ and SCALE-Sim's own topology engine has no padding concept at all
 via plain VALID convolution: ceil((ifmap-filt+stride)/stride), nothing
 else) -- so running that CSV through SCALE-Sim silently simulates a
 no-padding variant of ResNet18, understating every padded/strided layer's
-real ofmap size. cosma/helpers/topology_builder.py already solved this for
+real ofmap size. smm_helpers/topology_builder.py already solved this for
 model.json-sourced topologies by pre-folding 'SAME' padding into the CSV's
-IFMAP dims via _same_padded_dim() (TF's standard SAME formula); this file
+IFMAP dims via _same_padded_dim() (TF's standard SAME formula, duplicated
+from cosma/helpers/topology_builder.py's identical helper now that
+cosma/ lives on its own branch -- see that module's docstring); this file
 reuses that exact helper (not a reimplementation) for a hand-specified
 ResNet18, since no ResNet18 model.json export exists yet (see
 smm/docs/smm_model_roster.md).
@@ -26,7 +28,7 @@ was built to make possible end-to-end (not just in the standalone Python
 formula).
 
 FC is NOT written as a topology row -- same limitation as every other
-model.json-sourced CSV in this repo (cosma/helpers/topology_builder.py
+model.json-sourced CSV in this repo (smm_helpers/topology_builder.py
 only ever emits CONV2D/DEPTHWISE_CONV2D/CONV_3D rows). It is only used for
 smm_helpers.policy_selector's own LayerSpec-level footprint check, not
 for driving actual SCALE-Sim simulation.
@@ -41,7 +43,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from cosma.helpers.topology_builder import _same_padded_dim
+from smm.smm_helpers.topology_builder import _same_padded_dim
 
 DEFAULT_OUT = os.path.join(_REPO_ROOT, 'smm', 'topologies', 'resnet18_same_padded.csv')
 

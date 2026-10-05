@@ -11,11 +11,11 @@ methodology only ever simulates the baseline; Hom/Het are evaluated
 analytically in the paper itself).
 
 Model input: either a SCALE-Sim topology CSV directly (e.g.
-topologies/conv_nets/Resnet18.csv), or an exported model.json (e.g.
-cosma/_exported/MobileNet/model.json) -- converted to a topology CSV via
-cosma/helpers/topology_builder.build_topology(), the same converter
-COSMA/OnSRAM already use, so this doesn't duplicate that logic. Only
-CONV2D/DEPTHWISE_CONV2D/CONV_3D layers get a real, cycle-simulated
+topologies/conv_nets/Resnet18.csv), or an exported model.json -- converted
+to a topology CSV via smm_helpers/topology_builder.build_topology(),
+duplicated (not imported) from cosma/helpers/topology_builder.py's
+identical converter now that cosma/ lives on its own branch -- see that
+module's docstring. Only CONV2D/DEPTHWISE_CONV2D/CONV_3D layers get a real, cycle-simulated
 topology row either way. For a model.json input, DENSE (FC) layers are
 additionally costed analytically (smm_helpers/dense_costing.py, the exact
 same formula cosma/onsram already use for DENSE) and added equally to
@@ -27,7 +27,7 @@ available and stays conv-only.
 
 Usage:
   python3 smm/run_smm.py --model topologies/conv_nets/Resnet18.csv --glb_kb 64
-  python3 smm/run_smm.py --model cosma/_exported/MobileNet/model.json --glb_kb 64 128 256
+  python3 smm/run_smm.py --model /path/to/MobileNet/model.json --glb_kb 64 128 256
   python3 smm/run_smm.py --model ... --glb_kb 64 --objective latency --skip-baseline
 """
 from __future__ import annotations
@@ -57,12 +57,12 @@ PRECISION_BYTES = {'fp32': 4, 'fp16': 2, 'int8': 1}
 
 def _resolve_topology_csv(model_arg: str, scratch_dir: str) -> str:
     """model_arg is either a .csv topology already, or a model.json to
-    convert via cosma's topology_builder (CONV2D/DEPTHWISE_CONV2D/CONV_3D
-    layers only -- see module docstring)."""
+    convert via smm_helpers' topology_builder (CONV2D/DEPTHWISE_CONV2D/
+    CONV_3D layers only -- see module docstring)."""
     if model_arg.endswith('.csv'):
         return model_arg
     if model_arg.endswith('.json'):
-        from cosma.helpers.topology_builder import build_topology
+        from smm.smm_helpers.topology_builder import build_topology
         csv_path = os.path.join(scratch_dir, 'smm_topology.csv')
         build_topology(model_arg, csv_path)
         return csv_path
