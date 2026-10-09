@@ -1,0 +1,14 @@
+# scripts/feature-stages/sim-opt.txt
+# One stage per line: start_commit|end_commit|short name
+# start_commit must be the immediate child (in this branch's history) of
+# the previous line's end_commit, or of base-root for the first line --
+# scripts/make-feature-patches.sh verifies this and refuses to run if a
+# commit is skipped, duplicated, or out of order.
+# Edit freely; new commits past the last end_commit fall into an implicit
+# final "(uncurated recent work)" stage automatically.
+2026ecb|a0d26e6|SPM-for-DL baseline -- the performance base this branch optimizes
+2683d31|ea0f26f|Abandoned SMM-policy experiment (noise, inherited, unused downstream)
+dbcf2a7|eee57e3|cProfiler documentation notes
+9f70e72|c8c9a86|Benchmark suite build-out
+0490b5c|0490b5c|cProfile vanilla-vs-optimized benchmark plus paper figures and tables
+b9b5d27|1717513|Repo tooling plus the FilterSRAMBankNum config-typo correctness fix

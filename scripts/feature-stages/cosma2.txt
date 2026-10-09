@@ -1,0 +1,16 @@
+# scripts/feature-stages/cosma2.txt
+# One stage per line: start_commit|end_commit|short name
+# start_commit must be the immediate child (in this branch's history) of
+# the previous line's end_commit, or of base-root for the first line --
+# scripts/make-feature-patches.sh verifies this and refuses to run if a
+# commit is skipped, duplicated, or out of order.
+# Edit freely; new commits past the last end_commit fall into an implicit
+# final "(uncurated recent work)" stage automatically.
+2026ecb|a0d26e6|SPM-for-DL baseline and ~30% scalesim engine speedup
+2683d31|913d97e|Abandoned SMM-policy experiment (exploratory dead end)
+b88f694|08538b2|Initial COSMA ILP implementation
+a267895|1626dfe|COSMA scheduler: spm_allocator, graph rescheduler, Gurobi solver
+34f0fc1|c3353fc|Baseline and replacement policies plus logging
+117264a|b1a83c0|Cross-paper DRAM-traffic accounting fix in user mode
+7e754f8|14c8a70|spm_common extraction and cosma/onsram convergence toward paper results
+8ab295d|a611674|Branch cleanup to COSMA-only plus repo tooling

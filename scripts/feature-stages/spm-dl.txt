@@ -1,0 +1,16 @@
+# scripts/feature-stages/spm-dl.txt
+# One stage per line: start_commit|end_commit|short name
+# start_commit must be the immediate child (in this branch's history) of
+# the previous line's end_commit, or of base-root for the first line --
+# scripts/make-feature-patches.sh verifies this and refuses to run if a
+# commit is skipped, duplicated, or out of order.
+# Edit freely; new commits past the last end_commit fall into an implicit
+# final "(uncurated recent work)" stage automatically.
+2026ecb|a0d26e6|SPM-for-DL baseline and ~30% scalesim engine speedup
+2683d31|913d97e|Abandoned SMM-policy experiment #1 (noise, redone properly later)
+b88f694|08538b2|Inherited COSMA ILP groundwork
+a267895|c3353fc|Inherited COSMA scheduler refinements
+117264a|b1a83c0|Inherited OnSRAM work plus the DRAM-traffic fix
+7e754f8|74c7daa|spm_common refactor and cosma/onsram convergence
+243c2fa|dbcf52a|Real SMM implementation: policy selector, reuse buffers, DENSE costing, precision flags, benchmarking
+4f406a7|34e621a|Branch cleanup to SMM-only, topology_builder dedup, and repo tooling
