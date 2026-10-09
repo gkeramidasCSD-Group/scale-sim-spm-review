@@ -33,6 +33,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import csv
 import os
 import sys
 import tempfile
@@ -53,6 +54,19 @@ DEFAULT_CONFIG = os.path.join(_REPO_ROOT, 'configs', 'scale_smm.cfg')
 # and this port's prior, only behavior, kept as the default so omitting
 # --precision reproduces every previously-validated number unchanged.
 PRECISION_BYTES = {'fp32': 4, 'fp16': 2, 'int8': 1}
+
+# One row per (glb_kb, scheme) -- unlike cosma/onsram's run_experiments.py/
+# run_onsram.py, which collapse a (model, budget) combination down to a
+# single "the algorithm" row, SMM's own natural unit here is one of
+# several schemes (sa_25_75/sa_50_50/sa_75_25 baselines, Het_<objective>,
+# Hom_<objective>) compared against each other at the same glb_kb -- kept
+# as separate rows instead of forcing a single-winner collapse that would
+# throw away the comparison. dram_reduction_pct_vs_best_baseline mirrors
+# the stdout table's own "(+X.X% vs best baseline)" figure, blank for the
+# baseline rows themselves (there's nothing to compare a baseline to but
+# another baseline).
+CSV_FIELDS = ['model', 'glb_kb', 'objective', 'scheme', 'cycles', 'dram_bytes',
+              'dram_reduction_pct_vs_best_baseline']
 
 
 def _resolve_topology_csv(model_arg: str, scratch_dir: str) -> str:
@@ -128,6 +142,10 @@ def main():
                     help="Bytes/element for the baseline, Hom/Het, and DENSE-costing paths "
                          "alike (default: int8, the paper's own hardware -- matches every "
                          "previously-validated number).")
+    p.add_argument('--out-csv', default=None,
+                    help="Also write a (glb_kb, scheme) summary CSV to this path, one row "
+                         "per scheme per glb_kb swept -- mirrors cosma's/onsram's own "
+                         "--out-csv convention. Appends if the file already exists.")
     args = p.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
@@ -142,12 +160,36 @@ def main():
         dense_totals = cost_dense_layers_in_model(args.model, array_dims,
                                                    bytes_per_element=bytes_per_elem)
 
+    csv_rows = []
     with tempfile.TemporaryDirectory() as scratch:
         topology_csv = _resolve_topology_csv(args.model, scratch)
         for glb_kb in args.glb_kb:
-            _run_one_glb(topology_csv, args.config, glb_kb, args.objective,
-                         args.skip_baseline, args.out, dense_totals,
-                         bytes_per_elem=bytes_per_elem)
+            rows = _run_one_glb(topology_csv, args.config, glb_kb, args.objective,
+                                 args.skip_baseline, args.out, dense_totals,
+                                 bytes_per_elem=bytes_per_elem)
+            best_baseline_bytes = min((b for name, _, b in rows if name.startswith('sa_')),
+                                       default=None)
+            for name, cycles, dram_bytes in rows:
+                reduction_pct = ''
+                if best_baseline_bytes and not name.startswith('sa_'):
+                    reduction_pct = round((1 - dram_bytes / best_baseline_bytes) * 100, 2)
+                csv_rows.append(dict(
+                    model=args.model, glb_kb=glb_kb, objective=args.objective, scheme=name,
+                    cycles=cycles, dram_bytes=dram_bytes,
+                    dram_reduction_pct_vs_best_baseline=reduction_pct,
+                ))
+
+    if args.out_csv:
+        file_exists = os.path.isfile(args.out_csv) and os.path.getsize(args.out_csv) > 0
+        os.makedirs(os.path.dirname(os.path.abspath(args.out_csv)), exist_ok=True)
+        with open(args.out_csv, 'a', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=CSV_FIELDS)
+            if not file_exists:
+                writer.writeheader()
+            writer.writerows(csv_rows)
+            f.flush()
+            os.fsync(f.fileno())
+        print(f"\n[SMM] wrote {len(csv_rows)} row(s) to {args.out_csv}")
 
 
 if __name__ == '__main__':
