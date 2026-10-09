@@ -122,6 +122,18 @@ DEFAULT_MODEL = 'MobileNet'
 DEFAULT_SPM_MB = 2.0
 DEFAULT_PLOT_DIR = os.path.join(_ONSRAM_DIR, 'spm_plots')
 DEFAULT_LOGS_DIR = os.path.join(_ONSRAM_DIR, 'logs')
+
+# Mirrors smm/run_smm.py's own PRECISION_BYTES convention. Default 'fp16'
+# matches scale_sim_runner.BYTES_PER_ELEMENT's existing hardcoded default
+# (2 bytes -- an inference from the paper's FP16 SIMD unit, not a stated
+# tensor-precision fact; see scale_sim_runner.py's own module docstring).
+# --precision only overrides the module-level constant below main() runs
+# anything that reads it -- every read site in scale_sim_runner.py and
+# run_onsram.py's own _at_paper_precision() is a qualified
+# `scale_sim_runner.BYTES_PER_ELEMENT` or a same-module global lookup, so
+# this one assignment is visible everywhere, with no new parameter
+# threading needed.
+PRECISION_BYTES = {'fp32': 4, 'fp16': 2, 'int8': 1}
 DEFAULT_CONFIG = os.path.join(os.path.dirname(_COSMA_DIR), 'configs', 'scale.cfg')
 CONV_LIKE_OPS = ('CONV2D', 'DEPTHWISE_CONV2D')
 
@@ -677,11 +689,16 @@ def _parse_args():
     parser.add_argument('--no-scale-sim', action='store_true',
                         help="Skip Phase D's real SCALE-Sim pass (scale_sim_runner.run_onsram_aware()) "
                              "and only run the fast pinning decision -- no DRAM-savings numbers.")
+    parser.add_argument('--precision', choices=sorted(PRECISION_BYTES), default='fp16',
+                        help="Bytes/element for the SPM budget check, SCALE-Sim buffers, and "
+                             "DRAM traffic alike (default: fp16, matching every previously-"
+                             "validated OnSRAM number -- see scale_sim_runner.BYTES_PER_ELEMENT).")
     return parser.parse_args()
 
 
 if __name__ == '__main__':
     args = _parse_args()
+    scale_sim_runner.BYTES_PER_ELEMENT = PRECISION_BYTES[args.precision]
     model_args = args.models or [DEFAULT_MODEL]
     logs_dir = None if args.no_logs else args.logs_dir
     run_scale_sim = not args.no_scale_sim
