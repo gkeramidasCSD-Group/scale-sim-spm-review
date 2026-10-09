@@ -430,7 +430,15 @@ class read_buffer:
 
         # 4. Update the variables
         #self.last_prefetch_cycle = int(response_cycles_arr[-1][0])
-        self.last_prefetch_cycle = int(max(response_cycles_arr))
+        # np.max() (not the builtin max()) -- reduces every element of
+        # response_cycles_arr to a genuine 0-d scalar regardless of its
+        # shape, unlike max() over a 2D array (which compares rows and
+        # returns a row, not a scalar). int() of a non-0-d array (e.g. a
+        # size-1 row) is a hard TypeError on numpy>=2.0, though numpy<2.0
+        # silently allowed it -- confirmed via a real cross-environment
+        # failure (numpy 1.26.4 here vs. a fresh numpy 2.x install
+        # elsewhere, same requirements.txt's unpinned `numpy`).
+        self.last_prefetch_cycle = int(np.max(response_cycles_arr))
 
         # Update the trace matrix
         self.trace_matrix = np.column_stack((response_cycles_arr, prefetch_requests))

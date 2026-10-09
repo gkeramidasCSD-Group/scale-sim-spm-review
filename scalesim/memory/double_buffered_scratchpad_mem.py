@@ -338,7 +338,12 @@ class double_buffered_scratchpad:
             ofmap_serviced_cycles += [ofmap_cycle_out[0]]
             ofmap_stalls = ofmap_cycle_out[0] - cycle_arr[0]
 
-            self.stall_cycles += int(max(ifmap_stalls[0], filter_stalls[0], ofmap_stalls[0]))
+            # np.max() over a list, not the builtin max() over 3 args --
+            # same numpy>=2.0 scalar-conversion fix as read_buffer.py's
+            # prefetch_active_buffer(): each of these can be a size-1
+            # array (not a true scalar), and int() of one is a hard
+            # TypeError on numpy>=2.0 (silently allowed on numpy<2.0).
+            self.stall_cycles += int(np.max([ifmap_stalls[0], filter_stalls[0], ofmap_stalls[0]]))
             #self.stall_cycles += ifmap_stalls[0] + filter_stalls[0] + ofmap_stalls[0]
 
         # Guarded per-buffer (hasattr), not by estimate_bandwidth_mode alone: that
@@ -371,7 +376,8 @@ class double_buffered_scratchpad:
                                                  axis=1)
         #self.total_cycles = int(ofmap_serviced_cycles[-1][0])
         ## Probable fault in sanity check
-        self.total_cycles = int(max(ofmap_serviced_cycles))
+        # np.max(), same numpy>=2.0 scalar-conversion fix as above.
+        self.total_cycles = int(np.max(ofmap_serviced_cycles))
 
         # END of serving demands from memory
         self.traces_valid = True
