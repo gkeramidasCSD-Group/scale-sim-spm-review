@@ -101,6 +101,65 @@ Or drop `--no-scale-sim` to get the real cycle-accurate DRAM/speedup
 numbers instead of just the pinning decision (expect a few minutes, not
 seconds, per the script's own comment in `onsram/run_onsram.py`).
 
+## Fewer, more meaningful patches: feature-stage series
+
+`make-patch.sh`'s per-commit series is complete but noisy — 34-39 patches
+per branch, many just WIP ("small changes", "small fixes"). For a version
+that groups commits into real, named milestones instead, use the curated
+pair alongside it (never instead of it — the per-commit series still
+works exactly as described above):
+
+```bash
+scripts/make-feature-patches.sh cosma2      # writes patches-features/cosma2/01-...patch ... NN-...patch
+scripts/review-feature-patch.sh cosma2 3    # applies cosma2's curated series up through stage 3
+```
+
+Each stage is a single squashed patch (not one per original commit)
+covering a named milestone — e.g. cosma2's stage 3 is "Initial COSMA ILP
+implementation," stage 7 is "spm_common extraction and cosma/onsram
+convergence toward paper results." The stage boundaries live in
+`scripts/feature-stages/<branch>.txt` (commit-hash ranges + names) —
+edit that file to rename, split, or merge stages; re-running
+`make-feature-patches.sh` picks up the change. Anything committed after
+the last defined boundary automatically becomes an implicit, clearly
+labeled "(uncurated recent work)" final stage — nothing new is ever
+silently dropped, you just haven't named it yet.
+
+`review-feature-patch.sh <branch> <N>` works like `review-patch.sh`, but
+stops at stage `N` instead of applying everything — so you can step
+through a branch's real history one milestone at a time ("show me COSMA
+at stage 3") instead of jumping straight to the end. One real difference
+from `review-patch.sh`: at an *early* stage, the branch's own tooling
+commit (which is what makes `scripts/review-feature-patch.sh` itself
+available on `review`) may not have landed yet — if `review`'s current
+stage predates it, run the next `review-feature-patch.sh`/`make-feature-patches.sh`
+call from `main` instead of chaining it from `review`. Switching to a
+*different branch's* final stage, or any stage that already includes
+the tooling commit, doesn't have this restriction.
+
+## Cross-paper buffer-feature toggle (`cross-paper-buffers` branch)
+
+A separate branch, `cross-paper-buffers`, brings all three papers'
+SCALE-Sim buffer-level changes into one place so you can mix them — e.g.
+COSMA's resident-read behavior for ifmap, OnSRAM's for ofmap, on the same
+run. This is engine-level only (which buffer class handles a memory
+slot), not a way to run one paper's planning algorithm through another's
+scheduler — those are competing strategies, not composable pieces.
+
+```bash
+git checkout cross-paper-buffers
+python3 scripts/try-mixed-buffers.py \
+  --ifmap-buffer cosma_resident --ifmap-resident \
+  --ofmap-buffer onsram_resident --ofmap-stays-on-chip
+```
+Verified for real: this exact combination drops `ifmap_dram_reads` and
+`ofmap_dram_writes` to 0 (vs. 429/144 for an all-`vanilla` control) on
+one real simulated layer. `smm_reuse` (SMM's per-address reload-budget
+model, via `--ifmap-reload-budget N`) works the same way for ifmap/filter,
+but has no ofmap counterpart — SMM's model has no notion of a resident
+write buffer. See `scalesim/memory/buffer_registry.py` for the full
+registry, and that script's own `--help` for every flag.
+
 ## Primary review path
 
 A GitHub PR per job branch against `main` is the main way to review —
