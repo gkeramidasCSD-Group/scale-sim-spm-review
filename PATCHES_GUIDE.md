@@ -123,7 +123,11 @@ edit that file to rename, split, or merge stages; re-running
 `make-feature-patches.sh` picks up the change. Anything committed after
 the last defined boundary automatically becomes an implicit, clearly
 labeled "(uncurated recent work)" final stage — nothing new is ever
-silently dropped, you just haven't named it yet.
+silently dropped, you just haven't named it yet. **See
+`scripts/feature-stages/README.md` for what every single stage, on every
+branch, actually contains** (real commit ranges, why they're grouped
+that way, which generically-titled commits turned out to carry real
+content) — this file only covers the mechanism.
 
 `review-feature-patch.sh <branch> <N>` works like `review-patch.sh`, but
 stops at stage `N` instead of applying everything — so you can step
