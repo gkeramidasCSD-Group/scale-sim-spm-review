@@ -15,5 +15,10 @@ fi
 # the original per-branch commits were authored against the untouched
 # root, so replaying them has to land on that same frozen point.
 git checkout -B review base-root
-git am "$out"/*.patch
+# --keep-cr: some real history has CRLF text files (e.g.
+# paper_cmp/results.csv, topologies/conv_nets/dense121.csv) -- without
+# this, git am's mbox parsing silently strips the trailing \r from every
+# line, leaving 'review' byte-different from the real branch even though
+# nothing looks wrong (confirmed via a real git diff --quiet mismatch).
+git am --keep-cr "$out"/*.patch
 echo "applied $branch's patch series onto 'review' (based on base-root)"
