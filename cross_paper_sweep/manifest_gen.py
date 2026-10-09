@@ -70,6 +70,24 @@ def _base_row(paper, model_id, anchor, varied_axis, axis_value):
     )
 
 
+# axis -> the single anchor field that axis's value would otherwise
+# duplicate. Capacity has no such field: anchor["budget_kb"] is itself a
+# swept list around the paper's own budget, not one single anchor value,
+# so there's nothing for a capacity row to ever duplicate.
+_ANCHOR_FIELD = {"array": "array", "dataflow": "dataflow",
+                 "bandwidth": "bandwidth", "precision": "precision"}
+
+
+def _is_anchor_value(axis, value, anchor):
+    field = _ANCHOR_FIELD.get(axis)
+    if field is None:
+        return False
+    anchor_value = anchor[field]
+    if axis == "array":
+        return tuple(value) == tuple(anchor_value)
+    return value == anchor_value
+
+
 def build_manifest(papers=None, axes=None):
     papers = papers or list(ANCHORS)
     rows = []
@@ -82,6 +100,15 @@ def build_manifest(papers=None, axes=None):
                     continue  # e.g. precision on cosma -- not built yet, skip silently
                 values = anchor["budget_kb"] if axis == "capacity" else AXIS_LEVELS[axis]
                 for value in values:
+                    if _is_anchor_value(axis, value, anchor):
+                        # Varying this axis TO the anchor's own value is
+                        # not a different run at all -- same cfg, same
+                        # precision, same everything, just a different
+                        # varied_axis/axis_value label on an identical
+                        # call. Skipping it isn't losing a data point:
+                        # the anchor's own baseline is already covered by
+                        # every OTHER axis's own untouched-axis value.
+                        continue
                     rows.append(_base_row(paper, model_id, anchor, axis, value))
     return rows
 
