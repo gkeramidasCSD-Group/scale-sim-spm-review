@@ -1,0 +1,13 @@
+# scripts/feature-stages/OnSram.txt
+# One stage per line: start_commit|end_commit|short name
+# start_commit must be the immediate child (in this branch's history) of
+# the previous line's end_commit, or of base-root for the first line --
+# scripts/make-feature-patches.sh verifies this and refuses to run if a
+# commit is skipped, duplicated, or out of order.
+# Edit freely; new commits past the last end_commit fall into an implicit
+# final "(uncurated recent work)" stage automatically.
+2026ecb|a0d26e6|SPM-for-DL baseline and ~30% scalesim engine speedup
+2683d31|c3353fc|Inherited COSMA and scalesim groundwork (pre-split shared history)
+117264a|b1a83c0|OnSRAM born: FoM, pinning, placement, resident buffers, plus the DRAM-traffic fix
+7e754f8|50dc1a6|OnSRAM results converge toward paper numbers
+45c5907|2600c50|Branch cleanup to OnSRAM-only, repo tooling, and two correctness backports from cosma2
