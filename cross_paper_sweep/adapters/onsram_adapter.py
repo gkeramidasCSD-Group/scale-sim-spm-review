@@ -1,9 +1,14 @@
 """build_cmd()/parse_output() for onsram/run_onsram.py.
 
-Phase 1/2 scope: one subprocess call per manifest row (no group_key
-batching yet -- onsram/run_onsram.py's own --spm-mb nargs='+' already
-reuses one baseline pass across budgets, same trick as cosma, batching
-deferred to Phase 3 same as cosma_adapter.py).
+Same batching shape as cosma_adapter.py: a list of rows sharing
+everything except budget_kb folds into one --spm-mb call, reusing
+run_onsram.py's own already-existing single-baseline-per-model behavior
+across every spm_mb in the list.
+
+Row-matching is by spm_mb VALUE (not position), though confirmed by
+reading run_onsram.py's main() that its own `for spm_mb in args.spm_mb`
+loop has no pre-filtering/reordering step the way cosma's does -- matching
+by value anyway costs nothing and removes a fragile ordering assumption.
 """
 import csv
 
@@ -12,15 +17,20 @@ from anchors import _worktree_path, resolve_model_path
 PAPER = "onsram"
 
 
-def build_cmd(row: dict, cfg_path: str, out_csv: str) -> list:
+def _spm_mb(row: dict) -> float:
+    return float(row["budget_kb"]) / 1024.0  # manifest is kB everywhere; onsram's own flag is MB
+
+
+def build_cmd(rows: list, cfg_path: str, out_csv: str) -> list:
     venv_python = _worktree_path("onsram", ".venv", "bin", "python3")
     script = _worktree_path("onsram", "onsram", "run_onsram.py")
+    spm_mbs = [str(_spm_mb(row)) for row in rows]
     return [
         venv_python, script,
-        "--model", resolve_model_path("onsram", row["model_id"]),
-        "--spm-mb", str(float(row["budget_kb"]) / 1024.0),  # manifest is kB everywhere; onsram's own flag is MB
+        "--model", resolve_model_path("onsram", rows[0]["model_id"]),
+        "--spm-mb", *spm_mbs,
         "--config", cfg_path,
-        "--precision", row["precision"],
+        "--precision", rows[0]["precision"],
         "--out-csv", out_csv,
         "--no-logs",
     ]
@@ -30,21 +40,29 @@ def worktree_root() -> str:
     return _worktree_path("onsram")
 
 
-def parse_output(out_csv: str, row: dict) -> dict:
-    """onsram's own --out-csv has exactly one data row per (model, spm_mb)
-    call -- model/spm_mb/status/pinned/total_tensors/peak_mb/oversized/
-    dram_reduction_pct/speedup/log/error (run_onsram.py's own
-    _summary_row()/_error_row() -- no raw cycles/dram_bytes column, only
-    the % reduction and speedup, unlike cosma's schema)."""
+def parse_output(out_csv: str, rows: list) -> dict:
+    """onsram's own --out-csv: model/spm_mb/status/pinned/total_tensors/
+    peak_mb/oversized/dram_reduction_pct/speedup/log/error (run_onsram.py's
+    own _summary_row()/_error_row() -- no raw cycles/dram_bytes column,
+    only the % reduction and speedup, unlike cosma's schema)."""
     with open(out_csv, newline="") as f:
         data_rows = list(csv.DictReader(f))
-    if len(data_rows) != 1:
-        raise ValueError(f"expected exactly 1 row in {out_csv}, got {len(data_rows)}")
-    r = data_rows[0]
-    if r["status"] != "OK":
-        return dict(status=f"paper_status:{r['status']}", cycles="", dram_bytes="",
-                    speedup="", error=r.get("error", ""))
-    return dict(
-        status="ok", cycles="", dram_bytes="",
-        speedup=r["speedup"], error="",
-    )
+
+    by_spm_mb = {}
+    for r in data_rows:
+        by_spm_mb.setdefault(round(float(r["spm_mb"]), 6), []).append(r)
+
+    results = {}
+    for row in rows:
+        key = round(_spm_mb(row), 6)
+        matches = by_spm_mb.get(key)
+        if not matches:
+            raise ValueError(f"no row for spm_mb={key} in {out_csv} (got: {sorted(by_spm_mb)})")
+        r = matches.pop(0)
+        if r["status"] != "OK":
+            results[row["run_id"]] = dict(status=f"paper_status:{r['status']}", cycles="",
+                                           dram_bytes="", speedup="", error=r.get("error", ""))
+        else:
+            results[row["run_id"]] = dict(status="ok", cycles="", dram_bytes="",
+                                           speedup=r["speedup"], error="")
+    return results

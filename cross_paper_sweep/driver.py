@@ -1,12 +1,29 @@
 #!/usr/bin/env python3
 """The cross-paper sweep driver.
 
-Phase 1 scope: one subprocess call per manifest row (no group_key
-batching yet -- see adapters/cosma_adapter.py's own docstring; batching
-multiple capacity values into one call per paper's own --budgets-kb/
---spm-mb/--glb_kb flag is Phase 3). Structurally mirrors
-sim-opt:benchmark/run_sweep.py: resumable via a deterministic run_id key,
---only filtering for 2-machine splits, safe concurrent-append results CSV.
+Batches rows that share everything except budget_kb into one subprocess
+call, since every paper's own CLI already accepts a list of budgets and
+reuses one SCALE-Sim baseline pass across them internally (confirmed by
+reading cosma/run_experiments.py's run_model_sweep(), onsram/run_onsram.py's
+main() loop, smm/run_smm.py's own --glb_kb nargs='+') -- this is the one
+real, already-available saving ourtestbench_design.md's "cache compute
+per model/array/dataflow" idea reduces to in practice (see this branch's
+plan file). Rows varying any other axis (array/dataflow/bandwidth/
+precision) are never batched -- each needs its own distinct .cfg/flag, so
+there is nothing to share.
+
+Trade-off, stated plainly: batching means a timeout or parse failure on
+one call marks EVERY pending row in that batch as failed/timed-out, not
+just the one that actually broke -- coarser-grained than the unbatched
+per-row isolation this replaced. Acceptable here because a batch only
+ever groups rows that already share a cfg/model/precision (the thing
+most likely to be broken is shared across the whole group anyway), and
+it's the same trade-off cosma's/onsram's own CLIs already make internally
+by reusing one baseline pass across budgets.
+
+Otherwise structurally mirrors sim-opt:benchmark/run_sweep.py: resumable
+via a deterministic run_id key, --only filtering for 2-machine splits,
+safe concurrent-append results CSV.
 """
 import argparse
 import csv
@@ -70,10 +87,35 @@ def load_adapter(paper):
     return sys.modules[mod_name]
 
 
-def resolve_cfg(row, anchor, generated_cfg_dir):
-    """Reuses the anchor .cfg unmodified unless this row actually varies
-    array/dataflow/bandwidth -- capacity/precision-only rows never
-    generate a new .cfg file."""
+def batch_key(row):
+    """Rows with varied_axis == 'capacity' share everything except
+    budget_kb/axis_value/run_id by construction (manifest_gen.py's
+    _base_row only ever changes budget_kb for a 'capacity' row) -- those
+    batch together. Everything else gets its own run_id as a unique
+    singleton key, so a different array/dataflow/bandwidth/precision
+    value can never accidentally merge into someone else's batch."""
+    if row["varied_axis"] != "capacity":
+        return ("singleton", row["run_id"])
+    return ("capacity", row["paper"], row["model_id"], row["array_h"], row["array_w"],
+            row["dataflow"], row["bandwidth"], row["precision"],
+            row["solver"], row["objective"])
+
+
+def group_rows(rows):
+    """Groups preserving manifest order, both across groups and within
+    each group (plain dict insertion order, Python 3.7+)."""
+    groups = {}
+    for row in rows:
+        groups.setdefault(batch_key(row), []).append(row)
+    return list(groups.values())
+
+
+def resolve_cfg(group, anchor, generated_cfg_dir):
+    """Reuses the anchor .cfg unmodified unless this group actually varies
+    array/dataflow/bandwidth -- capacity/precision-only groups never
+    generate a new .cfg file. All rows in a group share these 3 fields by
+    construction (batch_key()), so group[0] speaks for the whole group."""
+    row = group[0]
     array = (int(row["array_h"]), int(row["array_w"]))
     dataflow = row["dataflow"]
     bandwidth = float(row["bandwidth"])
@@ -82,63 +124,77 @@ def resolve_cfg(row, anchor, generated_cfg_dir):
     if array == anchor_array and dataflow == anchor["dataflow"] and bandwidth == anchor["bandwidth"]:
         return anchor["config"]()
 
-    cfg_path = os.path.join(generated_cfg_dir, row["run_id"] + ".cfg")
+    group_id = "__".join(str(x) for x in batch_key(row))
+    cfg_path = os.path.join(generated_cfg_dir, group_id + ".cfg")
     cfg_gen.make_cfg(anchor["config"](), cfg_path, array=array, dataflow=dataflow, bandwidth=bandwidth)
     return cfg_path
 
 
-def execute_row(row, out_f, writer, dirs, timeout_override, dry_run, index, total):
-    paper = row["paper"]
+def execute_group(group, out_f, writer, dirs, timeout_override, dry_run, index, total, done):
+    pending = [row for row in group if row["run_id"] not in done]
+    label = f"{pending[0]['run_id']} (+{len(pending) - 1} more in batch)" if len(pending) > 1 else pending[0]["run_id"]
+
+    paper = pending[0]["paper"]
     if paper not in ADAPTERS:
-        print(f"[{index}/{total}] {row['run_id']} -- no adapter registered for paper={paper!r}, skipping")
+        print(f"[{index}/{total}] {label} -- no adapter registered for paper={paper!r}, skipping")
         return
 
     adapter = load_adapter(paper)
     anchor = ANCHORS[paper]
-    cfg_path = resolve_cfg(row, anchor, dirs["generated_configs"])
-    out_csv = os.path.join(dirs["paper_out"], row["run_id"] + ".csv")
+    cfg_path = resolve_cfg(pending, anchor, dirs["generated_configs"])
+    group_id = "__".join(str(x) for x in batch_key(pending[0]))
+    out_csv = os.path.join(dirs["paper_out"], group_id + ".csv")
+    log_path = os.path.join(dirs["logs"], paper, group_id + ".log")
     if os.path.exists(out_csv):
         # cosma's/onsram's own --out-csv truncate fresh each call, but
         # smm's appends (by design, for its own multi-glb_kb-in-one-call
         # usage) -- remove any stale file from a prior failed attempt at
-        # this same run_id so a retry can't silently accumulate rows.
+        # this same group so a retry can't silently accumulate rows.
         os.remove(out_csv)
-    log_path = os.path.join(dirs["logs"], paper, row["run_id"] + ".log")
-    cmd = adapter.build_cmd(row, cfg_path, out_csv)
-    timeout_s = timeout_override or float(row["timeout_s"])
+
+    cmd = adapter.build_cmd(pending, cfg_path, out_csv)
+    timeout_s = timeout_override or sum(float(row["timeout_s"]) for row in pending)
 
     if dry_run:
-        print(f"[{index}/{total}] {row['run_id']}")
+        print(f"[{index}/{total}] {label}  ({len(pending)} row(s) in this call)")
         print("  cwd:", adapter.worktree_root())
         print("  cmd:", " ".join(cmd))
         return
 
-    print(f"[{index}/{total}] {row['run_id']} -- running (timeout {timeout_s:.0f}s)...")
+    print(f"[{index}/{total}] {label} -- running {len(pending)} budget(s) (timeout {timeout_s:.0f}s)...")
     returncode, elapsed, timed_out = subprocess_utils.run_one(
         cmd, adapter.worktree_root(), log_path, timeout_s)
 
-    result = {k: row.get(k, "") for k in RESULT_FIELDS}
-    result.update(
-        wall_seconds=round(elapsed, 3), returncode=returncode, timed_out=timed_out,
-        log_path=log_path, timestamp=datetime.now(timezone.utc).isoformat(),
-        cycles="", dram_bytes="", speedup="", error="",
-    )
-
     if timed_out:
-        result["status"] = "timeout"
+        shared_status, shared_error = "timeout", ""
     elif returncode != 0:
-        result["status"] = "failed"
+        shared_status, shared_error = "failed", ""
     else:
-        try:
-            result.update(adapter.parse_output(out_csv, row))
-        except Exception as e:
-            result["status"] = "parse_error"
-            result["error"] = str(e)
+        shared_status, shared_error = None, None  # per-row below
 
-    writer.writerow(result)
+    parsed = {}
+    if shared_status is None:
+        try:
+            parsed = adapter.parse_output(out_csv, pending)
+        except Exception as e:
+            shared_status, shared_error = "parse_error", str(e)
+
+    for row in pending:
+        result = {k: row.get(k, "") for k in RESULT_FIELDS}
+        result.update(wall_seconds=round(elapsed, 3), returncode=returncode, timed_out=timed_out,
+                      log_path=log_path, timestamp=datetime.now(timezone.utc).isoformat(),
+                      cycles="", dram_bytes="", speedup="", error="")
+        if shared_status is not None:
+            result["status"] = shared_status
+            result["error"] = shared_error
+        else:
+            result.update(parsed.get(row["run_id"], dict(status="parse_error",
+                           error=f"adapter.parse_output() returned no entry for {row['run_id']}")))
+        writer.writerow(result)
+        print(f"  {row['run_id']} -> status={result['status']}")
+
     out_f.flush()
     os.fsync(out_f.fileno())
-    print(f"[{index}/{total}] {row['run_id']} -> {result['wall_seconds']}s status={result['status']}")
 
 
 def main():
@@ -147,7 +203,8 @@ def main():
     ap.add_argument("--results-csv", required=True)
     ap.add_argument("--only", default=None,
                      help="e.g. --only paper=cosma or --only paper=onsram,model_id=MobileNet")
-    ap.add_argument("--timeout-s-override", type=float, default=None)
+    ap.add_argument("--timeout-s-override", type=float, default=None,
+                     help="applies per BATCH CALL, not per row, when a group has >1 pending row")
     ap.add_argument("--dry-run", action="store_true",
                      help="print every command/cfg path, run nothing")
     args = ap.parse_args()
@@ -171,6 +228,9 @@ def main():
     for d in dirs.values():
         os.makedirs(d, exist_ok=True)
 
+    groups = group_rows(rows)
+    groups_to_run = [g for g in groups if any(row["run_id"] not in done for row in g)]
+
     os.makedirs(results_root, exist_ok=True)
     with open(args.results_csv, "a", newline="") as out_f:
         writer = csv.DictWriter(out_f, fieldnames=RESULT_FIELDS)
@@ -178,12 +238,15 @@ def main():
             writer.writeheader()
             out_f.flush()
 
-        total = len(rows)
-        for i, row in enumerate(rows, start=1):
-            if row["run_id"] in done:
-                print(f"[{i}/{total}] {row['run_id']} -- already done, skipping")
-                continue
-            execute_row(row, out_f, writer, dirs, args.timeout_s_override, args.dry_run, i, total)
+        total_rows = len(rows)
+        total_groups = len(groups_to_run)
+        skipped = total_rows - sum(len(g) for g in groups_to_run)
+        if skipped:
+            print(f"{skipped} row(s) already done, skipping")
+
+        for i, group in enumerate(groups_to_run, start=1):
+            execute_group(group, out_f, writer, dirs, args.timeout_s_override,
+                           args.dry_run, i, total_groups, done)
 
     if not args.dry_run:
         print(f"\nDone. Results in {args.results_csv}")
