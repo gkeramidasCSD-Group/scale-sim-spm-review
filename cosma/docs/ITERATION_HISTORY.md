@@ -2091,3 +2091,38 @@ a `DRAM_access.csv` file that doesn't exist in this SCALE-Sim version.
     fragmentation), even with a theoretically-sufficient total budget.
     Two independent, real models now confirm the same pattern. Results
     folded into both models' own rows in `paper_model_roster.md`.
+
+38. **Found and fixed a real crash: `build_cosma_model()` assumed `T`
+    (`sorted(nodes.keys())`, i.e. layer ids from `model.json`) is a
+    contiguous integer range.** Surfaced as a live `KeyError: (2, 9)` when
+    running a separate cross-paper benchmarking harness's AlexNet export
+    through the real ILP for the first time — Eq.2/Eq.3's `if t > t0`
+    guard (and the sibling Eq.11, and `build_mpmf_schedule_model()`'s
+    Eq.2') treated "t has a predecessor" as "t - 1 is itself a valid
+    timestep," then indexed `P[a, t-1]`/`S[a, t-1]`/`R[a, t-1]`/`L[a, t-1]`
+    directly. True for every model this project had actually run through
+    the real ILP before (the toy fixture, ResNet-50, DenseNet-121, etc. —
+    all confirmed gap-free on inspection), false for AlexNet's exported
+    `model.json`: the exporter (a separate `trim` repo) elides a
+    passthrough RESHAPE op (TFLite's lowering of the Flatten before
+    AlexNet's first Dense layer) but its id-assigning counter keeps
+    advancing through the elided position regardless, so layer id 9
+    simply never exists in that model's graph. Checking the rest of that
+    harness's own model roster found the identical gap in ResNet18's and
+    MobileNet's exported graphs too (GoogLeNet and MobileNetV2 are
+    gap-free) — not an AlexNet-specific quirk, a latent bug that had
+    simply never been exercised on these particular three exports before.
+    Fix: a `prev_t` predecessor map (`{T[i]: T[i-1] for i in
+    range(1, len(T))}` — `T` is already sorted, so `T[i-1]` is
+    unambiguously "the previous *scheduled* timestep" regardless of the
+    raw integer gap) used everywhere Eq.2/3/11/2' chain off "resident at
+    the previous t," replacing the raw `t - 1` arithmetic. Zero behavior
+    change for any model whose ids are already contiguous (every
+    previously-validated model) — reverified the toy fixture solves
+    identically, then confirmed all three previously-crashing models now
+    solve to real `Optimal` results at their own structural-minimum
+    budgets: AlexNet (82.17% DRAM reduction, 5.09x), ResNet18 (97.16%,
+    14.33x), MobileNet (83.39%, 2.76x). Deliberately fixed at the ILP
+    layer, not in the exporter or `graph_builder.py`: this project's own
+    code should be robust to whatever ids its input graph actually has,
+    not assume the exporter always hands it a gap-free one.
