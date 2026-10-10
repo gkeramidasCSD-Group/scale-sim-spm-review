@@ -105,8 +105,8 @@ PAPER_CONFIG = {
 # entry's own note for why.
 SMOKE_MODELS = {
     "cosma": ("cosma_default", lambda: _worktree_path("cosma", "cosma", "model.json"), "~10s"),
-    "onsram": ("sample_model", "/home/george/scale-sim-spm/scripts/fixtures/sample_model.json", "~6s"),
-    "smm": ("tiny_fixture", "/home/george/scale-sim-spm/scripts/fixtures/tiny_topology.csv", "<1s"),
+    "onsram": ("sample_model", lambda: _worktree_path("onsram", "scripts", "fixtures", "sample_model.json"), "~6s"),
+    "smm": ("tiny_fixture", lambda: _worktree_path("smm", "scripts", "fixtures", "tiny_topology.csv"), "<1s"),
 }
 
 
