@@ -68,12 +68,20 @@ echo "=== venvs ==="
 # reported at the end, never silently swallowed.
 FAILED_VENVS=()
 setup_one_venv() (
-  set -euo pipefail
+  # Deliberately NOT relying on `set -e` here: this function's exit
+  # status is tested by the caller's `if ! setup_one_venv ...`, and
+  # POSIX/bash disable errexit for any command whose result is being
+  # tested this way -- INCLUDING every command inside this subshell.
+  # Confirmed the hard way: with plain `set -e`, a failing step here
+  # kept running every subsequent line regardless, and only the LAST
+  # command's (unrelated) exit status reached the caller, so a real
+  # failure upstream was silently reported as success. Explicit
+  # `|| return 1` after each step sidesteps that gotcha entirely.
   d="$1"
-  python3 -m venv "$d/.venv"
-  "$d/.venv/bin/pip" install -q -U pip
-  "$d/.venv/bin/pip" install -q -r "$d/requirements.txt"
-  "$d/.venv/bin/pip" install -q -e "$d"        # editable scalesim install -- required, not
+  python3 -m venv "$d/.venv" || return 1
+  "$d/.venv/bin/pip" install -q -U pip || return 1
+  "$d/.venv/bin/pip" install -q -r "$d/requirements.txt" || return 1
+  "$d/.venv/bin/pip" install -q -e "$d" || return 1   # editable scalesim install -- required, not
                                                  # optional: without this, plain `import scalesim`
                                                  # (e.g. this sweep's own _import_probe.py) fails
                                                  # with ModuleNotFoundError even though each
@@ -81,7 +89,7 @@ setup_one_venv() (
                                                  # root onto sys.path. Confirmed necessary by this
                                                  # setup script's own first run on this machine --
                                                  # preflight.py caught it immediately.
-  "$d/.venv/bin/pip" install -q gurobipy        # license file already on this machine
+  "$d/.venv/bin/pip" install -q gurobipy || return 1  # license file already on this machine
                                                  # (~/gurobi.lic); cosma/run_experiments.py
                                                  # defaults to --solver gurobi.
 )
