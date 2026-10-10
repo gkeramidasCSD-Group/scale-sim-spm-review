@@ -69,17 +69,31 @@ def _same_padded_dim(in_dim: int, k: int, stride: int) -> int:
     return in_dim + pad_total
 
 
-def build_topology(model_json_path: str, csv_path: str) -> Dict[int, int]:
+def build_topology(model_json_path: str, csv_path: str) -> Tuple[Dict[int, int], Dict[int, int]]:
     """
     Writes a SCALE-Sim topology CSV to csv_path.
-    Returns layer_id_to_row: model.json layer id -> topology CSV row index
-    (0-based, matching SCALE-Sim's per-layer report ordering).
+    Returns (layer_id_to_row, row_to_real_ifmap_elems):
+      layer_id_to_row: model.json layer id -> topology CSV row index
+        (0-based, matching SCALE-Sim's per-layer report ordering).
+      row_to_real_ifmap_elems: topology CSV row index -> the layer's real,
+        full input tensor element count (math.prod(input_shape)), present
+        ONLY for DEPTHWISE_CONV2D rows. Per this module's own docstring,
+        SCALE-Sim's Channels=1/Num Filter=C encoding makes it simulate one
+        input plane shared by all C columns, so its own reported ifmap
+        traffic for these rows is for the wrong (1-channel, not C-channel)
+        data -- cosma/helpers/baseline.py's _simulate_layer() already
+        corrects this for COSMA's own runner by replacing SCALE-Sim's
+        count with this same real element count; this dict lets
+        smm/smm_helpers/scale_sim_runner.py apply the identical
+        correction, since SMM's runner works only from the CSV (no
+        retained reference to model.json's own layers otherwise).
     """
     with open(model_json_path, 'r') as f:
         model = json.load(f)
 
     rows: List[Tuple] = []
     layer_id_to_row: Dict[int, int] = {}
+    row_to_real_ifmap_elems: Dict[int, int] = {}
 
     for layer in model['layers']:
         op = layer['op']
@@ -128,6 +142,8 @@ def build_topology(model_json_path: str, csv_path: str) -> Dict[int, int]:
 
         row_index = len(rows)
         layer_id_to_row[layer['id']] = row_index
+        if op == 'DEPTHWISE_CONV2D':
+            row_to_real_ifmap_elems[row_index] = math.prod(in_shape)
         name = f"{op}_{layer['id']}"
         rows.append((name, ifmap_h, ifmap_w, kh, kw, channels, num_filters, stride))
 
@@ -139,7 +155,7 @@ def build_topology(model_json_path: str, csv_path: str) -> Dict[int, int]:
         for r in rows:
             writer.writerow(list(r) + [''])
 
-    return layer_id_to_row
+    return layer_id_to_row, row_to_real_ifmap_elems
 
 
 if __name__ == '__main__':
@@ -158,7 +174,10 @@ if __name__ == '__main__':
                               '(default: smm/topology.csv).')
     args = parser.parse_args()
 
-    mapping = build_topology(args.model_json, args.out_csv)
+    mapping, depthwise_real_ifmap_elems = build_topology(args.model_json, args.out_csv)
     print(f"Wrote {len(mapping)} conv-like layers to {args.out_csv}")
     print(f"First few mappings (layer id -> row): "
           f"{dict(list(mapping.items())[:5])}")
+    if depthwise_real_ifmap_elems:
+        print(f"{len(depthwise_real_ifmap_elems)} depthwise row(s) with a real-ifmap "
+              f"correction available: {depthwise_real_ifmap_elems}")

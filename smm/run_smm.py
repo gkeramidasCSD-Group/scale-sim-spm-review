@@ -69,23 +69,29 @@ CSV_FIELDS = ['model', 'glb_kb', 'objective', 'scheme', 'cycles', 'dram_bytes',
               'dram_reduction_pct_vs_best_baseline']
 
 
-def _resolve_topology_csv(model_arg: str, scratch_dir: str) -> str:
+def _resolve_topology_csv(model_arg: str, scratch_dir: str):
     """model_arg is either a .csv topology already, or a model.json to
     convert via smm_helpers' topology_builder (CONV2D/DEPTHWISE_CONV2D/
-    CONV_3D layers only -- see module docstring)."""
+    CONV_3D layers only -- see module docstring).
+
+    Returns (topology_csv_path, depthwise_real_ifmap_elems). The second
+    value is {} for a bare .csv input -- there's no model.json to derive
+    real per-channel depthwise ifmap sizes from in that case, so the
+    known ifmap-undercounting gap (PAPER_IMPLEMENTATION_LOG.md section
+    1.6) stays uncorrected for that path, same as before this fix."""
     if model_arg.endswith('.csv'):
-        return model_arg
+        return model_arg, {}
     if model_arg.endswith('.json'):
         from smm.smm_helpers.topology_builder import build_topology
         csv_path = os.path.join(scratch_dir, 'smm_topology.csv')
-        build_topology(model_arg, csv_path)
-        return csv_path
+        _, depthwise_real_ifmap_elems = build_topology(model_arg, csv_path)
+        return csv_path, depthwise_real_ifmap_elems
     raise ValueError(f"--model must be a .csv topology or a model.json, got: {model_arg}")
 
 
 def _run_one_glb(topology_csv: str, config_file: str, glb_kb: int, objective: str,
                   skip_baseline: bool, out_dir: str, dense_totals: dict = None,
-                  bytes_per_elem: int = 1):
+                  bytes_per_elem: int = 1, depthwise_real_ifmap_elems: dict = None):
     print(f"\n{'#' * 90}\n# GLB = {glb_kb} kB, objective = {objective}\n{'#' * 90}")
 
     dense_cycles = dense_totals['compute_cycles'] if dense_totals else 0
@@ -96,7 +102,8 @@ def _run_one_glb(topology_csv: str, config_file: str, glb_kb: int, objective: st
     if not skip_baseline:
         for ratio_name in BASELINE_RATIOS:
             res = run_baseline(topology_csv, config_file, glb_kb, ratio_name,
-                                word_size=bytes_per_elem)
+                                word_size=bytes_per_elem,
+                                depthwise_real_ifmap_elems=depthwise_real_ifmap_elems)
             rows.append((ratio_name, res.total_cycles + dense_cycles,
                          res.total_dram_bytes + dense_bytes))
 
@@ -107,6 +114,7 @@ def _run_one_glb(topology_csv: str, config_file: str, glb_kb: int, objective: st
             output_dir=os.path.join(out_dir, f'{label}_{glb_kb}kb'),
             verbose=False, save_ifmap_trace=False, save_filter_trace=False,
             save_ofmap_trace=False, bytes_per_elem=bytes_per_elem,
+            depthwise_real_ifmap_elems=depthwise_real_ifmap_elems,
         )
         runner.run()
         totals = runner.get_actual_totals()
@@ -162,11 +170,12 @@ def main():
 
     csv_rows = []
     with tempfile.TemporaryDirectory() as scratch:
-        topology_csv = _resolve_topology_csv(args.model, scratch)
+        topology_csv, depthwise_real_ifmap_elems = _resolve_topology_csv(args.model, scratch)
         for glb_kb in args.glb_kb:
             rows = _run_one_glb(topology_csv, args.config, glb_kb, args.objective,
                                  args.skip_baseline, args.out, dense_totals,
-                                 bytes_per_elem=bytes_per_elem)
+                                 bytes_per_elem=bytes_per_elem,
+                                 depthwise_real_ifmap_elems=depthwise_real_ifmap_elems)
             best_baseline_bytes = min((b for name, _, b in rows if name.startswith('sa_')),
                                        default=None)
             for name, cycles, dram_bytes in rows:

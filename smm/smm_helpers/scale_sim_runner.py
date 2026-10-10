@@ -109,6 +109,16 @@ class SMMScaleSimRunner:
         bytes_per_elem: int   = 1,   # paper's own 8-bit hardware (Sec. 4); a
                                      # cross-paper-benchmark parameter, not
                                      # something the paper itself varies.
+        depthwise_real_ifmap_elems: dict = None,
+                                     # {topology CSV row -> real full-tensor
+                                     # element count}, from topology_builder.
+                                     # build_topology() -- see that module's
+                                     # docstring and PAPER_IMPLEMENTATION_LOG.md
+                                     # section 1.6 for why SCALE-Sim's own
+                                     # reported ifmap traffic for a depthwise
+                                     # row needs this correction. {} (default)
+                                     # for a bare-CSV topology input with no
+                                     # model.json to derive it from.
     ):
         self.topology_file  = topology_file
         self.config_file    = config_file
@@ -121,6 +131,7 @@ class SMMScaleSimRunner:
         self.save_ifmap_trace  = save_ifmap_trace
         self.save_filter_trace = save_filter_trace
         self.save_ofmap_trace  = save_ofmap_trace
+        self.depthwise_real_ifmap_elems = depthwise_real_ifmap_elems or {}
 
         # SCALE-Sim objects
         self.config = ScaleConfig()
@@ -357,9 +368,21 @@ class SMMScaleSimRunner:
             # smm/docs/smm_verification.md.
             cycles, *_ = sim.get_compute_report_items()
             items = sim.get_detail_report_items()
+            # DEPTHWISE_CONV2D rows: SCALE-Sim simulated one input plane
+            # shared by all C columns (channels-across-columns mapping,
+            # see topology_builder.py's module docstring), so items[11]
+            # is for the wrong (1-channel, not C-channel) data -- replace
+            # it with the real full-tensor element count, same correction
+            # cosma/helpers/baseline.py's _simulate_layer() already makes
+            # for COSMA's own runner (PAPER_IMPLEMENTATION_LOG.md section
+            # 1.6 -- this was previously NOT ported to SMM's runner).
+            if lid in self.depthwise_real_ifmap_elems:
+                ifmap_bytes = self.depthwise_real_ifmap_elems[lid]
+            else:
+                ifmap_bytes = items[11]
             self.layer_results.append(dict(
                 cycles=cycles,
-                ifmap_bytes=items[11], filter_bytes=items[14], ofmap_bytes=items[17],
+                ifmap_bytes=ifmap_bytes, filter_bytes=items[14], ofmap_bytes=items[17],
             ))
 
         print(f"\n[SMM] Simulation complete. Traces in: {self.output_dir}\n")

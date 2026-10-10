@@ -103,7 +103,8 @@ class BaselineResult:
 
 
 def run_baseline(topology_file: str, config_file: str, glb_size_kb: int,
-                  ratio_name: str = 'sa_50_50', word_size: int = 1) -> BaselineResult:
+                  ratio_name: str = 'sa_50_50', word_size: int = 1,
+                  depthwise_real_ifmap_elems: dict = None) -> BaselineResult:
     """
     Runs every conv layer of topology_file through a plain (unmodified)
     SCALE-Sim simulation with the fixed ifmap/filter/ofmap partition
@@ -111,7 +112,19 @@ def run_baseline(topology_file: str, config_file: str, glb_size_kb: int,
     the paper's own baseline (Sec. 4), word-for-word at the default
     word_size=1 (the paper's own 8-bit hardware, Sec. 4). word_size is a
     cross-paper-benchmark parameter, not something the paper itself varies.
+
+    depthwise_real_ifmap_elems: {topology CSV row -> real full-tensor
+    element count}, from topology_builder.build_topology() -- corrects
+    SCALE-Sim's own depthwise ifmap undercounting (see
+    smm_helpers/topology_builder.py's module docstring and
+    PAPER_IMPLEMENTATION_LOG.md section 1.6) for the baseline the same
+    way scale_sim_runner.py's run() corrects it for Het/Hom, so the "%
+    vs best baseline" comparison isn't comparing a corrected number
+    against an uncorrected one. {} (default) for a bare-CSV topology
+    input with no model.json to derive this from -- a no-op, matching
+    this function's pre-fix behavior exactly.
     """
+    depthwise_real_ifmap_elems = depthwise_real_ifmap_elems or {}
     ifmap_frac, filter_frac = BASELINE_RATIOS[ratio_name]
     glb_bytes = glb_size_kb * 1024
 
@@ -134,7 +147,11 @@ def run_baseline(topology_file: str, config_file: str, glb_size_kb: int,
 
         total_cycles, *_ = sim.get_compute_report_items()
         items = sim.get_detail_report_items()
-        ifmap_dram_reads, filter_dram_reads, ofmap_dram_writes = items[11], items[14], items[17]
+        filter_dram_reads, ofmap_dram_writes = items[14], items[17]
+        if lid in depthwise_real_ifmap_elems:
+            ifmap_dram_reads = depthwise_real_ifmap_elems[lid]
+        else:
+            ifmap_dram_reads = items[11]
 
         name = str(topo.get_layer_name(lid))
         result.add(name, total_cycles, ifmap_dram_reads, filter_dram_reads, ofmap_dram_writes)
