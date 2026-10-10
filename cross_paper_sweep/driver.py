@@ -96,10 +96,26 @@ def batch_key(row):
     """Rows with varied_axis == 'capacity' share everything except
     budget_kb/axis_value/run_id by construction (manifest_gen.py's
     _base_row only ever changes budget_kb for a 'capacity' row) -- those
-    batch together. Everything else gets its own run_id as a unique
-    singleton key, so a different array/dataflow/bandwidth/precision
-    value can never accidentally merge into someone else's batch."""
-    if row["varied_axis"] != "capacity":
+    batch together, EXCEPT for smm. cosma's/onsram's own CLIs genuinely
+    reuse one baseline pass across a --budgets-kb/--spm-mb list, so
+    batching saves real compute for them. smm's run_smm.py re-runs its
+    full 5-pass (3 baselines + Het + Hom) sequence per glb_kb regardless
+    -- batching buys it nothing, and actively hurts: its own main() only
+    writes --out-csv once, after its ENTIRE glb_kb loop finishes (not
+    per-budget), so a timeout/crash on one budget in a batch discards
+    every other budget's already-completed result too. Confirmed live:
+    a 4-budget smm batch on GoogLeNet hit its own (already budget_kb-
+    summed) timeout at 2:00:00 with zero rows salvaged, despite 2.5+
+    budgets' worth of real work having already finished. smm's capacity
+    rows fall through to the singleton path instead, one call per
+    budget -- same per-call isolation array/dataflow/bandwidth/precision
+    rows already get, for the same reason.
+
+    Everything else (any paper, any non-capacity axis) gets its own
+    run_id as a unique singleton key, so a different array/dataflow/
+    bandwidth/precision value can never accidentally merge into someone
+    else's batch."""
+    if row["varied_axis"] != "capacity" or row["paper"] == "smm":
         return ("singleton", row["run_id"])
     return ("capacity", row["paper"], row["model_id"], row["array_h"], row["array_w"],
             row["dataflow"], row["bandwidth"], row["precision"],

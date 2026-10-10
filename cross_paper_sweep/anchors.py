@@ -86,7 +86,17 @@ PAPER_CONFIG = {
     ),
     "smm": dict(
         config=lambda: _worktree_path("smm", "configs", "scale_smm.cfg"),
-        precision="int8", solver="", objective="accesses", timeout_s=1800,
+        precision="int8", solver="", objective="accesses", timeout_s=5400,
+        # Per SINGLE budget now (driver.py's batch_key() no longer
+        # batches smm's capacity rows -- see its own docstring). Real
+        # measured data point: a 4-budget batch on GoogLeNet (the
+        # largest model in the roster, 82 layers) was still ~70-80%
+        # through at the 2:00:00 mark its own summed timeout killed it
+        # at -- extrapolating, one budget alone is realistically
+        # ~40-45min on GoogLeNet specifically. 5400s (90min) leaves real
+        # margin above that worst-case model; every smaller model in
+        # the roster (13-65 layers vs GoogLeNet's 82) should finish well
+        # under this.
     ),
 }
 
