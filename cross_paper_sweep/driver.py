@@ -38,7 +38,7 @@ if HERE not in sys.path:
 
 import cfg_gen
 import subprocess_utils
-from anchors import ANCHORS
+from anchors import SHARED_SCENARIO, PAPER_CONFIG
 
 ADAPTERS = {
     "cosma": "adapters.cosma_adapter",
@@ -110,23 +110,25 @@ def group_rows(rows):
     return list(groups.values())
 
 
-def resolve_cfg(group, anchor, generated_cfg_dir):
-    """Reuses the anchor .cfg unmodified unless this group actually varies
-    array/dataflow/bandwidth -- capacity/precision-only groups never
-    generate a new .cfg file. All rows in a group share these 3 fields by
-    construction (batch_key()), so group[0] speaks for the whole group."""
+def resolve_cfg(group, paper, generated_cfg_dir):
+    """Reuses that paper's own template .cfg unmodified unless this group
+    actually varies array/dataflow/bandwidth away from SHARED_SCENARIO --
+    capacity/precision-only groups never generate a new .cfg file. All
+    rows in a group share these 3 fields by construction (batch_key()),
+    so group[0] speaks for the whole group."""
     row = group[0]
     array = (int(row["array_h"]), int(row["array_w"]))
     dataflow = row["dataflow"]
     bandwidth = float(row["bandwidth"])
-    anchor_array = tuple(anchor["array"])
+    base_config = PAPER_CONFIG[paper]["config"]()
 
-    if array == anchor_array and dataflow == anchor["dataflow"] and bandwidth == anchor["bandwidth"]:
-        return anchor["config"]()
+    if (array == tuple(SHARED_SCENARIO["array"]) and dataflow == SHARED_SCENARIO["dataflow"]
+            and bandwidth == SHARED_SCENARIO["bandwidth"]):
+        return base_config
 
     group_id = "__".join(str(x) for x in batch_key(row))
     cfg_path = os.path.join(generated_cfg_dir, group_id + ".cfg")
-    cfg_gen.make_cfg(anchor["config"](), cfg_path, array=array, dataflow=dataflow, bandwidth=bandwidth)
+    cfg_gen.make_cfg(base_config, cfg_path, array=array, dataflow=dataflow, bandwidth=bandwidth)
     return cfg_path
 
 
@@ -140,8 +142,7 @@ def execute_group(group, out_f, writer, dirs, timeout_override, dry_run, index, 
         return
 
     adapter = load_adapter(paper)
-    anchor = ANCHORS[paper]
-    cfg_path = resolve_cfg(pending, anchor, dirs["generated_configs"])
+    cfg_path = resolve_cfg(pending, paper, dirs["generated_configs"])
     group_id = "__".join(str(x) for x in batch_key(pending[0]))
     out_csv = os.path.join(dirs["paper_out"], group_id + ".csv")
     log_path = os.path.join(dirs["logs"], paper, group_id + ".log")
