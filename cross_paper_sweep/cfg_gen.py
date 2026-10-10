@@ -7,6 +7,13 @@ cosma/run_experiments.py, onsram/run_onsram.py, smm/run_smm.py -- none
 hardcode these in Python), so varying these axes needs zero changes to
 any paper's own code, only a different .cfg file on disk.
 """
+from __future__ import annotations  # `tuple | None`-style hints need this
+                                     # on Python <3.10 (confirmed: broke on
+                                     # a real machine's older system python3
+                                     # with a raw TypeError at import time --
+                                     # this defers all annotations to
+                                     # strings, never evaluated, zero
+                                     # behavior change either way)
 import configparser
 import os
 
