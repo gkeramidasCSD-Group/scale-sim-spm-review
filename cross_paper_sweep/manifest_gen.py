@@ -16,7 +16,8 @@ import argparse
 import csv
 import os
 
-from anchors import SHARED_SCENARIO, SHARED_MODELS, PAPER_CONFIG, AXIS_LEVELS, SMOKE_MODELS, shared_model_path
+from anchors import (SHARED_SCENARIO, SHARED_MODELS, PAPER_CONFIG, AXIS_LEVELS,
+                      SMOKE_MODELS, SMALL_ARRAY_MODELS, shared_model_path)
 from bounds import capacity_points_kb
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -113,6 +114,13 @@ def build_manifest(papers=None, axes=None, models=None):
                     continue  # e.g. precision on cosma -- not built yet, skip silently
                 values = points_kb if axis == "capacity" else AXIS_LEVELS[axis]
                 for value in values:
+                    if (axis == "array" and tuple(value) == (8, 8)
+                            and model_id not in SMALL_ARRAY_MODELS):
+                        # Scoped to AlexNet only -- see anchors.py's
+                        # SMALL_ARRAY_MODELS docstring (user's explicit
+                        # call: 8x8 is proven dramatically slower, not
+                        # worth its cost on the other 4 models).
+                        continue
                     if axis != "capacity" and _is_anchor_value(paper, axis, value):
                         # Varying this axis TO the shared scenario's own
                         # value is not a different run at all -- same

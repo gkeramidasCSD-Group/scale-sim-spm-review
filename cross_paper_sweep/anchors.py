@@ -121,3 +121,17 @@ AXIS_LEVELS = {
     "bandwidth": [8, 16, 32, 64],
     "precision": ["int8", "fp16", "fp32"],
 }
+
+# 8x8 specifically (not 32x32 -- more PEs only ever means FEWER cycles,
+# never a cost risk) is scoped to AlexNet only, not the full roster.
+# SCALE-Sim's per-cycle Python loop cost scales with cycle count, and
+# halving each array dimension roughly QUADRUPLES the cycles needed for
+# the same compute-bound workload (confirmed directly: an 8x8 AlexNet run
+# didn't finish in 191s where 16x16 took well under that; separately
+# already known from the sim-opt branch that small arrays + small SPM
+# budgets are a proven slow combination). AlexNet (13 layers, the
+# smallest/fastest model in the roster) keeps the full 3-point sweep;
+# GoogLeNet/ResNet18/MobileNet/MobileNetV2 get 32x32 vs the 16x16 anchor
+# only -- user's explicit call, an asymmetric array axis rather than
+# dropping 8x8 everywhere or accepting its full cost on all 5 models.
+SMALL_ARRAY_MODELS = {"AlexNet"}
