@@ -190,14 +190,24 @@ def build_mpmf_schedule_model(nodes, tensors):
     M_peak = pulp.LpVariable("M_peak", lowBound=0, upBound=total_bytes, cat='Integer')
 
     t0 = T[0]
+    # T is sorted(nodes.keys()) -- real layer ids from model.json, which can
+    # have GAPS (an exporter may elide a passthrough op, e.g. a Flatten's
+    # RESHAPE, while its id-assigning counter keeps advancing regardless --
+    # confirmed on AlexNet, whose exported model.json has no layer id 9).
+    # "t - 1" is therefore NOT always "the previous scheduled timestep" --
+    # use this predecessor map (T is sorted, so T[i-1] is unambiguously
+    # that) instead of raw integer arithmetic. Confirmed via a live
+    # KeyError(2, 9) crash on AlexNet before this map existed.
+    prev_t = {T[i]: T[i - 1] for i in range(1, len(T))}
     for a in A:
         for t in T:
             # Eq.1'
             prob += C[a, t] + P[a, t] <= 1, f"MEq1_{a}_{t}"
             # Eq.2' -- same base-case reasoning as build_cosma_model()'s
-            # Eq.2/3: no t-1 to chain from at the very first timestep.
+            # Eq.2/3: no predecessor to chain from at the very first timestep.
             if t > t0:
-                prob += P[a, t] <= C[a, t - 1] + P[a, t - 1], f"MEq2_{a}_{t}"
+                pt = prev_t[t]
+                prob += P[a, t] <= C[a, pt] + P[a, pt], f"MEq2_{a}_{t}"
             else:
                 prob += P[a, t] == 0, f"MEq2_base_{a}_{t}"
 
@@ -492,26 +502,38 @@ def build_cosma_model(nodes, tensors, memory_budget_bytes: int, free_schedule: b
         return Cv(a, t) + P[a, t] + R[a, t]
 
     t0 = T[0]
+    # T is sorted(nodes.keys()) -- real layer ids from model.json, which can
+    # have GAPS (an exporter may elide a passthrough op, e.g. a Flatten's
+    # RESHAPE, while its id-assigning counter keeps advancing regardless --
+    # confirmed on AlexNet, whose exported model.json has no layer id 9, via
+    # a live KeyError(2, 9) crash). "t - 1" is therefore NOT always "the
+    # previous scheduled timestep" -- use this predecessor map (T is
+    # sorted, so T[i-1] is unambiguously that) instead of raw integer
+    # arithmetic, everywhere Eq.2/3/11 chain "resident at the previous t."
+    prev_t = {T[i]: T[i - 1] for i in range(1, len(T))}
 
     # Eq.1: at most one action per tensor per timestep
     for a in A:
         for t in T:
             prob += Cv(a, t) + P[a, t] + S[a, t] + R[a, t] <= 1, f"Eq1_{a}_{t}"
 
-    # Eq.2/3: preserve/spill only if resident at t-1; Eq.4: retrieve only if spilled by t.
-    # Base case (t == T[0]): there is no t-1 for Eq.2/3 to chain from, so
-    # nothing can be "already resident" yet -- without this, P[a,T[0]]/
-    # S[a,T[0]] are left completely unconstrained for every tensor (Eq.1
-    # alone doesn't forbid them), letting the solver plant a zero-cost
-    # "phantom" P (or, worse, a genuinely double-counted S) on a tensor
-    # before it's even created. Confirmed to actually happen on ResNet-50
-    # (5 of 79 tensors got a spurious P at t=0 in an optimal solve) --
-    # silent on every previously-validated smaller model, but a real gap.
+    # Eq.2/3: preserve/spill only if resident at the previous scheduled t;
+    # Eq.4: retrieve only if spilled by t.
+    # Base case (t == T[0]): there is no predecessor for Eq.2/3 to chain
+    # from, so nothing can be "already resident" yet -- without this,
+    # P[a,T[0]]/S[a,T[0]] are left completely unconstrained for every
+    # tensor (Eq.1 alone doesn't forbid them), letting the solver plant a
+    # zero-cost "phantom" P (or, worse, a genuinely double-counted S) on a
+    # tensor before it's even created. Confirmed to actually happen on
+    # ResNet-50 (5 of 79 tensors got a spurious P at t=0 in an optimal
+    # solve) -- silent on every previously-validated smaller model, but a
+    # real gap.
     for a in A:
         for t in T:
             if t > t0:
-                prob += P[a, t] <= Cv(a, t - 1) + P[a, t - 1] + R[a, t - 1], f"Eq2_{a}_{t}"
-                prob += S[a, t] <= Cv(a, t - 1) + P[a, t - 1], f"Eq3_{a}_{t}"
+                pt = prev_t[t]
+                prob += P[a, t] <= Cv(a, pt) + P[a, pt] + R[a, pt], f"Eq2_{a}_{t}"
+                prob += S[a, t] <= Cv(a, pt) + P[a, pt], f"Eq3_{a}_{t}"
             else:
                 prob += P[a, t] == 0, f"Eq2_base_{a}_{t}"
                 prob += S[a, t] == 0, f"Eq3_base_{a}_{t}"
@@ -623,9 +645,10 @@ def build_cosma_model(nodes, tensors, memory_budget_bytes: int, free_schedule: b
     for a in A:
         for t in T:
             if t > t0:
-                prob += (L[a, t] - L[a, t - 1] <= budget * (1 - V[a, t]),
+                pt = prev_t[t]
+                prob += (L[a, t] - L[a, pt] <= budget * (1 - V[a, t]),
                          f"Eq11a_{a}_{t}")
-                prob += (L[a, t - 1] - L[a, t] <= budget * (1 - V[a, t]),
+                prob += (L[a, pt] - L[a, t] <= budget * (1 - V[a, t]),
                          f"Eq11b_{a}_{t}")
 
     # Eq.12: minimize non-compulsory (spill + retrieve) DRAM traffic.
