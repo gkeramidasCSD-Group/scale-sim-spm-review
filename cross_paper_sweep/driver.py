@@ -57,15 +57,20 @@ RESULT_FIELDS = [
 
 
 def parse_only(only_str):
+    """Repeated key=value pairs OR together (e.g. "paper=cosma,paper=onsram"
+    selects rows matching EITHER); different keys AND together (e.g.
+    "paper=cosma,model_id=MobileNet" still means paper==cosma AND
+    model_id==MobileNet) -- needed for a 2-machine split by paper, where
+    one machine runs more than one paper."""
     filters = {}
     for pair in only_str.split(","):
         key, _, value = pair.partition("=")
-        filters[key.strip()] = value.strip()
+        filters.setdefault(key.strip(), set()).add(value.strip())
     return filters
 
 
 def row_matches(row, filters):
-    return all(str(row.get(key, "")) == value for key, value in filters.items())
+    return all(str(row.get(key, "")) in values for key, values in filters.items())
 
 
 def load_done_run_ids(csv_path):
@@ -203,7 +208,8 @@ def main():
     ap.add_argument("--manifest", required=True)
     ap.add_argument("--results-csv", required=True)
     ap.add_argument("--only", default=None,
-                     help="e.g. --only paper=cosma or --only paper=onsram,model_id=MobileNet")
+                     help="e.g. --only paper=cosma or --only paper=onsram,model_id=MobileNet "
+                          "(different keys AND); --only paper=cosma,paper=onsram ORs repeated keys")
     ap.add_argument("--timeout-s-override", type=float, default=None,
                      help="applies per BATCH CALL, not per row, when a group has >1 pending row")
     ap.add_argument("--dry-run", action="store_true",
