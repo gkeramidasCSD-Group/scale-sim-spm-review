@@ -96,27 +96,46 @@ def check_gurobi(venv_python):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--worktrees-json", default=os.path.join(HERE, "worktrees.json"))
+    ap.add_argument("--skip-papers", default="",
+                     help="comma-separated paper names (cosma/onsram/smm) this machine "
+                          "intentionally never runs (e.g. a machine only ever invoked "
+                          "with --only paper=smm doesn't need cosma's own venv "
+                          "functional, even though cosma's WORKTREE/cache must still "
+                          "exist for model-path resolution -- see anchors.py's "
+                          "shared_model_path(), which always resolves through the "
+                          "'cosma' entry regardless of which paper is asking). Still "
+                          "runs check_files() for skipped papers (cheap, and the cache "
+                          "symlink matters regardless of --only); only skips the "
+                          "venv-import and gurobi checks for them.")
     args = ap.parse_args()
+    skip = {p.strip() for p in args.skip_papers.split(",") if p.strip()}
 
     with open(args.worktrees_json) as f:
         worktrees = json.load(f)
 
     all_problems = []
     numpy_versions = {}
+    skipped = []
 
     for name, info in worktrees.items():
         all_problems += check_files(name, info["root"])
+        if name in skip:
+            skipped.append(name)
+            continue
         problems, numpy_version = check_python(name, info["venv_python"], info["root"])
         all_problems += problems
         numpy_versions[name] = numpy_version
 
-    if "cosma" in worktrees:
+    if "cosma" in worktrees and "cosma" not in skip:
         all_problems += check_gurobi(worktrees["cosma"]["venv_python"])
 
     versions_seen = {v for v in numpy_versions.values() if v}
     if len(versions_seen) > 1:
         print(f"WARNING: numpy version mismatch across worktrees: {numpy_versions}. "
               f"Not blocking, but worth knowing before comparing timing across papers.")
+
+    if skipped:
+        print(f"Skipped venv/gurobi checks for: {skipped} (--skip-papers)")
 
     print()
     if all_problems:

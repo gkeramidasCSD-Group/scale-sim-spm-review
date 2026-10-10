@@ -56,8 +56,20 @@ for pattern in "/cosma/" "/.venv/"; do
 done
 
 echo "=== venvs ==="
-for d in "$WORKTREES_DIR/cosma2" "$WORKTREES_DIR/onsram" "$MAIN_REPO"; do
-  echo "-- $d --"
+# A failure setting up ANY ONE of these three (e.g. cosma2's pulp/gurobipy
+# needing a newer Python than this machine's system python3 -- confirmed
+# real on a second machine still running 3.8) must NOT abort the other
+# two: a machine that will only ever run --only paper=smm doesn't need
+# cosma2's venv to work at all, but under plain `set -e` a single failed
+# `pip install` here used to kill the whole script before even reaching
+# onsram's or smm's own (actually-needed) venv setup, and before writing
+# worktrees.json at the bottom. Each iteration runs in its own subshell
+# so `set -e` inside it can't propagate out; failures are collected and
+# reported at the end, never silently swallowed.
+FAILED_VENVS=()
+setup_one_venv() (
+  set -euo pipefail
+  d="$1"
   python3 -m venv "$d/.venv"
   "$d/.venv/bin/pip" install -q -U pip
   "$d/.venv/bin/pip" install -q -r "$d/requirements.txt"
@@ -72,6 +84,16 @@ for d in "$WORKTREES_DIR/cosma2" "$WORKTREES_DIR/onsram" "$MAIN_REPO"; do
   "$d/.venv/bin/pip" install -q gurobipy        # license file already on this machine
                                                  # (~/gurobi.lic); cosma/run_experiments.py
                                                  # defaults to --solver gurobi.
+)
+for d in "$WORKTREES_DIR/cosma2" "$WORKTREES_DIR/onsram" "$MAIN_REPO"; do
+  echo "-- $d --"
+  if ! setup_one_venv "$d"; then
+    echo "WARNING: venv setup FAILED for $d -- continuing with the other worktrees." \
+         "If this machine never runs the paper this worktree belongs to (--only" \
+         "excludes it), this is harmless; otherwise fix and re-run this script" \
+         "(safe to re-run, each step is idempotent)."
+    FAILED_VENVS+=("$d")
+  fi
 done
 
 echo "=== worktrees.json ==="
@@ -88,4 +110,11 @@ JSON
 grep -qxF "/cross_paper_sweep/worktrees.json" "$MAIN_REPO/.git/info/exclude" 2>/dev/null || \
   echo "/cross_paper_sweep/worktrees.json" >> "$MAIN_REPO/.git/info/exclude"
 
-echo "=== done -- run cross_paper_sweep/preflight.py next ==="
+if [ "${#FAILED_VENVS[@]}" -gt 0 ]; then
+  echo "=== done WITH ${#FAILED_VENVS[@]} venv failure(s): ${FAILED_VENVS[*]} ==="
+  echo "preflight.py will report these too -- use its --skip-papers flag" \
+       "if this machine intentionally never runs the affected paper(s)."
+else
+  echo "=== done, no venv failures ==="
+fi
+echo "run cross_paper_sweep/preflight.py next"
