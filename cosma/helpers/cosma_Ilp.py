@@ -680,7 +680,22 @@ def solve(prob, time_limit_sec=None, msg=False, solver='cbc'):
     clearly and never treat it as equivalent to a real 'Optimal'.
     """
     if solver == 'gurobi':
-        pulp_solver = pulp.GUROBI(msg=msg, timeLimit=time_limit_sec)
+        # Threads=1/Seed=0: Eq.12's objective doesn't care WHEN within a
+        # tensor's valid window a retrieve fires, so multiple equally-cheap
+        # solutions are routinely tied on objective value. A separate,
+        # downstream accounting pass (run_cosma.py's real_retrieve_tensor
+        # credit) scores those tied solutions differently depending on
+        # retrieve timing, which the ILP itself never sees. Without a fixed
+        # thread count and seed, Gurobi's parallel B&B can land on a
+        # different tied-optimal vertex run to run, making the final
+        # reported byte count non-reproducible for the identical
+        # model+budget (confirmed directly: one run of ResNet50-with-params
+        # at 10158KB reported 1,605,632 bytes, a re-run of the identical
+        # problem reported 868,516 -- same ILP, same true optimum, pure
+        # tie-break noise). Pinning both makes repeated runs deterministic.
+        pulp_solver = pulp.GUROBI(msg=msg, timeLimit=time_limit_sec,
+                                   IntFeasTol=1e-9, FeasibilityTol=1e-9,
+                                   Threads=1, Seed=0)
     elif solver == 'cbc':
         pulp_solver = pulp.PULP_CBC_CMD(msg=msg, timeLimit=time_limit_sec)
     else:
