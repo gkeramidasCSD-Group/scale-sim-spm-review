@@ -74,15 +74,32 @@ def shared_model_path(model_id: str) -> str:
 PAPER_CONFIG = {
     "cosma": dict(
         config=lambda: _worktree_path("cosma", "configs", "scale.cfg"),
-        precision="fp32", solver="gurobi", objective="", timeout_s=300,
+        precision="fp32", solver="gurobi", objective="", timeout_s=3600,
+        # Was 300s -- confirmed WRONG on a real run (every single
+        # non-capacity row for GoogLeNet timed out at exactly 300s on
+        # mary). Root cause: driver.py's timeout is
+        # sum(row.timeout_s for row in the batch) -- fine for a
+        # capacity batch (N budgets sharing ONE baseline pass, so 300s
+        # x N rows gives real headroom), but every array/dataflow/
+        # bandwidth/precision row is a SINGLETON (1 row), which still
+        # has to pay that SAME full baseline pass alone, just for a
+        # single budget. On GoogLeNet (the largest model) that's
+        # already most of the capacity batch's own total cost (759s
+        # measured for a 4-budget batch) -- 300s was never going to be
+        # enough for a singleton row on this model. 3600s leaves real
+        # margin above that, and above bandwidth=8 rows specifically
+        # (lower bandwidth -> more stall cycles simulated -> likely
+        # SLOWER than the bw=16 anchor this was measured at, not faster).
     ),
     "onsram": dict(
         config=lambda: _worktree_path("onsram", "configs", "scale_onsram.cfg"),
-        precision="fp16", solver="", objective="", timeout_s=600,
-        # Real shared-roster models (GoogLeNet/ResNet18/AlexNet/MobileNet/
-        # MobileNetV2), not the sample_model smoke fixture -- raised from
-        # the per-paper-anchor design's 300s since these are all real
-        # Phase D passes; re-measure once the real sweep actually runs.
+        precision="fp16", solver="", objective="", timeout_s=3600,
+        # Was 600s -- same confirmed-wrong root cause as cosma above:
+        # every onsram singleton row for GoogLeNet timed out at exactly
+        # 600s on mary, while the capacity batch (4 budgets, same
+        # shared-baseline reuse) succeeded at 1047s. A singleton row
+        # pays the same baseline cost alone; 600s was never enough on
+        # this model.
     ),
     "smm": dict(
         config=lambda: _worktree_path("smm", "configs", "scale_smm.cfg"),
